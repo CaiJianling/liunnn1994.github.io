@@ -4,261 +4,198 @@ import {
   useMotionValue,
   useSpring,
   useTransform,
+  MotionValue,
 } from "motion/react";
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { Filter } from "./Filter";
 
 export const Switch: React.FC = () => {
-  //
-  // CONSTANTS (layout + optics)
-  //
+  // --- 常量设定 ---
   const sliderHeight = 67;
   const sliderWidth = 160;
   const thumbWidth = 146;
   const thumbHeight = 92;
   const thumbRadius = thumbHeight / 2;
-  const sliderRef = React.useRef<HTMLDivElement>(null);
+  const sliderRef = useRef<HTMLDivElement>(null);
+
+  const THUMB_REST_SCALE = 0.65;
+  const THUMB_ACTIVE_SCALE = 1;
+  const THUMB_REST_OFFSET = ((1 - THUMB_REST_SCALE) * thumbWidth) / 2;
+  const TRAVEL = sliderWidth - sliderHeight - (thumbWidth - thumbHeight) * THUMB_REST_SCALE;
+
+  // --- 核心状态 ---
+  const checked = useMotionValue(1);
+  const pointerDown = useMotionValue(0);
+  const forceActive = useMotionValue(false);
+  const xDragRatio = useMotionValue(0);
+  const initialPointerX = useMotionValue(0);
+  const startDragRatio = useMotionValue(0);
+  const previousPointerX = useMotionValue(0);
+  const velocityX = useMotionValue(0);
+
+  // --- 物理模拟控制 ---
+
+  // 1. 位置控制：显式监听 pointerDown, xDragRatio 和 checked
+  const targetX = useTransform(
+    () => {
+      const pd = pointerDown.get();
+      const drag = xDragRatio.get();
+      const chk = checked.get();
+      return pd > 0.5 ? drag : chk;
+    }
+  ) as MotionValue<number>;
+
+  const xRatio = useSpring(targetX, { damping: 40, stiffness: 500 });
+
+  // 2. 液化逻辑：通过显式数组依赖确保实时计算
+  const isLiquid = useTransform(
+    () => {
+      const x = xRatio.get();
+      const c = checked.get();
+      const pd = pointerDown.get();
+      if (forceActive.get() || pd > 0.5) return 1;
+      // 这里的 0.08 决定了何时从玻璃变回白块，数值越大变回来的越早（体感停顿越短）
+      return Math.abs(x - c) > 0.08 ? 1 : 0;
+    }
+  ) as MotionValue<number>;
+
+  // 3. 凝固动画：控制从玻璃变回白色椭圆的过程
+  const liquidEffect = useSpring(isLiquid, {
+    stiffness: 400, // 适中的恢复速度
+    damping: 35,
+  });
+
+  // --- 视觉表现参数 ---
+
+  const objectScale = useTransform(liquidEffect, [0, 1], [THUMB_REST_SCALE, THUMB_ACTIVE_SCALE]);
+  const backgroundOpacity = useTransform(liquidEffect, [0, 1], [1, 0.05]);
+
+  // 速度产生的物理形变
+  const smoothedVelocity = useSpring(velocityX, { stiffness: 300, damping: 40 });
+  const objectScaleY = useTransform(() => {
+    const base = objectScale.get();
+    const vel = Math.abs(smoothedVelocity.get());
+    const stretch = Math.min(vel / 2500, 0.3); // 稍微增加了一点拉伸感
+    return base * (1 - stretch);
+  });
+  const objectScaleX = useTransform(() => {
+    const base = objectScale.get();
+    const sy = objectScaleY.get();
+    return base + (base - sy) * 1.6;
+  });
+
+  // 滤镜参数
   const blur = useMotionValue(0.2);
   const specularOpacity = useMotionValue(0.5);
   const specularSaturation = useMotionValue(6);
   const refractionBase = useMotionValue(1);
-  const xDragRatio = useMotionValue(0);
+  const magnifyingScale = useTransform(liquidEffect, [0, 1], [12, -12]);
+  const scaleRatio = useTransform(() => (0.4 + 0.5 * liquidEffect.get()) * refractionBase.get());
 
-  const THUMB_REST_SCALE = 0.65;
-  const THUMB_ACTIVE_SCALE = 1;
-
-  const THUMB_REST_OFFSET = ((1 - THUMB_REST_SCALE) * thumbWidth) / 2;
-
-  const TRAVEL =
-    sliderWidth - sliderHeight - (thumbWidth - thumbHeight) * THUMB_REST_SCALE;
-
-  //
-  // MOTION SOURCES
-  //
-  const checked = useMotionValue(1);
-  const pointerDown = useMotionValue(0);
-  const forceActive = useMotionValue(false);
-  const velocityX = useMotionValue(0);
-  const previousPointerX = useMotionValue(0);
-  const isUp = useTransform((): number =>
-    forceActive.get() || pointerDown.get() > 0.5 ? 1 : 0
+  const backgroundColor = useTransform(
+    xRatio,
+    (value) => value > 0.5 ? "#3BBF4EEE" : "#94949F77"
   );
 
-  // 平滑速度，减少抖动
-  const smoothedVelocityX = useSpring(velocityX, {
-    stiffness: 300,
-    damping: 30,
+  // 增强版多重动态阴影
+  const boxShadow = useTransform(liquidEffect, (v) => {
+    const alpha = mix(0.12, 0.25, v);
+    const blurVal = mix(6, 28, v);
+    const sy = mix(4, 18, v);
+    const insetAlpha = mix(0, 0.4, v); // 增强内阴影深度
+    const outer = `0px ${sy}px ${blurVal}px rgba(0,0,0,${alpha})`;
+    const inset = v > 0.1
+      ? `, inset 4px 10px 20px rgba(0,0,0,${insetAlpha}), inset -4px -10px 20px rgba(255,255,255,${insetAlpha})`
+      : '';
+
+    return outer + inset;
   });
 
-  //
-  // GLOBAL POINTER-UP LISTENER
-  //
+  // --- 交互逻辑 ---
+  const handlePointerDown = (e: React.PointerEvent) => {
+    e.stopPropagation();
+    pointerDown.set(1);
+    initialPointerX.set(e.clientX);
+    previousPointerX.set(e.clientX);
+    // 关键修复：从当前物理位置开始计算拖拽，而不是从状态位开始
+    startDragRatio.set(xRatio.get());
+    xDragRatio.set(xRatio.get());
+  };
+
   useEffect(() => {
-    const onPointerUp = (e: MouseEvent | TouchEvent) => {
+    const handleGlobalUpdate = (e: MouseEvent | TouchEvent) => {
+      if (pointerDown.get() < 0.5) return;
+
+      const clientX = e instanceof MouseEvent ? e.clientX : e.touches[0].clientX;
+      const displacementX = clientX - initialPointerX.get();
+      // 基于开始时的 ratio 进行累加位移
+      const ratio = startDragRatio.get() + displacementX / TRAVEL;
+
+      xDragRatio.set(Math.min(1.1, Math.max(-0.1, ratio)));
+
+      const currentVel = clientX - previousPointerX.get();
+      velocityX.set(currentVel * 12); // 增强速度反馈
+      previousPointerX.set(clientX);
+    };
+
+    const handleGlobalUp = (e: MouseEvent | TouchEvent) => {
+      if (pointerDown.get() < 0.5) return;
+
+      const clientX = e instanceof MouseEvent ? e.clientX : e.changedTouches[0].clientX;
+      const distance = Math.abs(clientX - initialPointerX.get());
+
       pointerDown.set(0);
       velocityX.set(0);
 
-      const x =
-        e instanceof MouseEvent ? e.clientX : e.changedTouches[0].clientX;
-
-      const distance = x - initialPointerX.get();
-      if (Math.abs(distance) > 4) {
-        const x = xDragRatio.get();
-        const shouldBeChecked = x > 0.5;
-        checked.set(shouldBeChecked ? 1 : 0);
+      // 如果有位移，根据位置判定 checked；如果是点击，由 onClick 处理
+      if (distance > 5) {
+        checked.set(xDragRatio.get() > 0.5 ? 1 : 0);
       }
     };
 
-    window.addEventListener("mouseup", onPointerUp);
-    window.addEventListener("touchend", onPointerUp);
+    window.addEventListener("mousemove", handleGlobalUpdate);
+    window.addEventListener("touchmove", handleGlobalUpdate, { passive: false });
+    window.addEventListener("mouseup", handleGlobalUp);
+    window.addEventListener("touchend", handleGlobalUp);
+
     return () => {
-      window.removeEventListener("mouseup", onPointerUp);
-      window.removeEventListener("touchend", onPointerUp);
+      window.removeEventListener("mousemove", handleGlobalUpdate);
+      window.removeEventListener("touchmove", handleGlobalUpdate);
+      window.removeEventListener("mouseup", handleGlobalUp);
+      window.removeEventListener("touchend", handleGlobalUp);
     };
-  }, []);
-
-  //
-  // SPRINGS
-  //
-  const xRatio = useSpring(
-    useTransform(() => {
-      const c = checked.get();
-      const dragRatio = xDragRatio.get();
-
-      if (pointerDown.get() > 0.5) {
-        return dragRatio;
-      } else {
-        return c ? 1 : 0;
-      }
-    }),
-    { damping: 80, stiffness: 1000 }
-  );
-
-  // 液态玻璃缩放 - 与Slider相同
-  const magnifyingScale = useSpring(
-    useTransform(isUp, (d): number => (d ? -12 : 12)),
-    {
-      stiffness: 250,
-      damping: 14,
-    }
-  );
-
-  const backgroundOpacity = useSpring(
-    useTransform(isUp, [0, 1], [1, 0.1]),
-    { damping: 80, stiffness: 2000 }
-  );
-
-  // 弹簧动画参数 - 拖拽时有形变
-  const objectScale = useSpring(
-    useTransform(isUp, [0, 1], [THUMB_REST_SCALE, THUMB_ACTIVE_SCALE]),
-    { stiffness: 340, damping: 20 }
-  );
-  const objectScaleY = useTransform(
-    (): number => {
-      const baseScale = objectScale.get();
-      const velocityFactor = Math.abs(smoothedVelocityX.get()) / 1200;
-      const deformation = 1 - Math.min(velocityFactor, 0.35);
-      return baseScale * deformation;
-    }
-  );
-  const objectScaleX = useTransform((): number => {
-    const baseScale = objectScale.get();
-    const currentScaleY = objectScaleY.get();
-    // 确保 scaleX * scaleY 接近 baseScale^2（体积守恒）
-    return baseScale + (baseScale - currentScaleY);
-  });
-
-  const scaleRatio = useSpring(
-    useTransform(() => (0.4 + 0.5 * isUp.get()) * refractionBase.get())
-  );
-  const considerChecked = useTransform(() => {
-    const x = xDragRatio.get();
-    const c = checked.get();
-    return pointerDown.get() ? (x > 0.5 ? 1 : 0) : c > 0.5 ? 1 : (0 as number);
-  });
-
-  const backgroundColor = useTransform(
-    useSpring(considerChecked, { damping: 80, stiffness: 1000 }),
-    mix("#94949F77", "#3BBF4EEE")
-  );
-
-  // 阴影弹簧动画 - 静置时只有外阴影，拖拽时添加内阴影
-  const shadowSx = useSpring(
-    useTransform(isUp, [0, 1], [0, 4]),
-    { stiffness: 340, damping: 30 }
-  );
-  const shadowSy = useSpring(
-    useTransform(isUp, [0, 1], [4, 16]),
-    { stiffness: 340, damping: 30 }
-  );
-  const shadowAlpha = useSpring(
-    useTransform(isUp, [0, 1], [0.16, 0.22]),
-    {
-      stiffness: 220,
-      damping: 24,
-    }
-  );
-  const insetShadowAlpha = useSpring(
-    useTransform(isUp, [0, 1], [0, 0.27]),
-    {
-      stiffness: 220,
-      damping: 24,
-    }
-  );
-  const shadowBlur = useSpring(
-    useTransform(isUp, [0, 1], [9, 24]),
-    {
-      stiffness: 340,
-      damping: 30,
-    }
-  );
-  const boxShadow = useTransform(
-    () => {
-      const inset = isUp.get() > 0.5
-        ? `inset ${shadowSx.get() / 2}px ${shadowSy.get() / 2}px 24px rgba(0,0,0,${insetShadowAlpha.get()}),
-           inset ${-shadowSx.get() / 2}px ${-shadowSy.get() / 2}px 24px rgba(255,255,255,${insetShadowAlpha.get()})`
-        : '';
-      return `${shadowSx.get()}px ${shadowSy.get()}px ${shadowBlur.get()}px rgba(0,0,0,${shadowAlpha.get()})${inset ? ', ' + inset : ''}`;
-    }
-  );
-
-  const initialPointerX = useMotionValue(0);
+  }, [TRAVEL]);
 
   return (
     <>
       <div
-        className="relative h-96 flex justify-center items-center rounded-xl -ml-[15px] w-[calc(100%+30px)] select-none text-black/5 dark:text-white/5 [--bg1:#f8fafc] [--bg2:#e7eeef] dark:[--bg1:#1b1b22] dark:[--bg2:#0f0f14] border border-black/10 dark:border-white/10 touch-pan-y touch-none contain-layout contain-style contain-paint [content-visibility:auto]"
+        className="relative h-96 flex justify-center items-center rounded-xl -ml-[15px] w-[calc(100%+30px)] select-none text-black/5 dark:text-white/5 [--bg1:#f8fafc] [--bg2:#e7eeef] dark:[--bg1:#1b1b22] dark:[--bg2:#0f0f14] border border-black/10 dark:border-white/10 touch-none"
         style={{
-          backgroundImage:
-            "linear-gradient(to right, currentColor 1px, transparent 1px)," +
-            "linear-gradient(to bottom, currentColor 1px, transparent 1px)," +
-            "radial-gradient(120% 100% at 10% 0%, var(--bg1), var(--bg2))",
+          backgroundImage: "linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px), radial-gradient(120% 100% at 10% 0%, var(--bg1), var(--bg2))",
           backgroundSize: "24px 24px, 24px 24px, 100% 100%",
           backgroundPosition: "12px 12px, 12px 12px, 0 0",
-        }}
-        onMouseMove={(e) => {
-          if (!sliderRef.current) return;
-          e.stopPropagation();
-          const baseRatio = checked.get();
-          const clientX = e.clientX;
-          const displacementX = clientX - initialPointerX.get();
-          const ratio = baseRatio + displacementX / TRAVEL;
-          const overflow = ratio < 0 ? -ratio : ratio > 1 ? ratio - 1 : 0;
-          const overflowSign = ratio < 0 ? -1 : 1;
-          const dampedOverflow = (overflowSign * overflow) / 22;
-          xDragRatio.set(Math.min(1, Math.max(0, ratio)) + dampedOverflow);
-          // 更新速度 - 计算当前帧与上一帧的差值
-          if (pointerDown.get() > 0.5) {
-            const prevX = previousPointerX.get();
-            const currentVelocity = clientX - prevX;
-            velocityX.set(currentVelocity * 5); // 降低倍数减少抖动
-            previousPointerX.set(clientX);
-          }
-        }}
-        onTouchMove={(e) => {
-          if (!sliderRef.current) return;
-          e.stopPropagation();
-          const baseRatio = checked.get();
-          const clientX = e.touches[0].clientX;
-          const displacementX = clientX - initialPointerX.get();
-          const ratio = baseRatio + displacementX / TRAVEL;
-          const overflow = ratio < 0 ? -ratio : ratio > 1 ? ratio - 1 : 0;
-          const overflowSign = ratio < 0 ? -1 : 1;
-          const dampedOverflow = (overflowSign * overflow) / 22;
-          xDragRatio.set(Math.min(1, Math.max(0, ratio)) + dampedOverflow);
-          // 更新速度 - 计算当前帧与上一帧的差值
-          if (pointerDown.get() > 0.5 && e.touches.length > 0) {
-            const prevX = previousPointerX.get();
-            const currentVelocity = clientX - prevX;
-            velocityX.set(currentVelocity * 5); // 降低倍数减少抖动
-            previousPointerX.set(clientX);
-          }
         }}
       >
         <motion.div
           ref={sliderRef}
           style={{
-            display: "inline-block",
             width: sliderWidth,
             height: sliderHeight,
-            backgroundColor: backgroundColor,
+            backgroundColor,
             borderRadius: sliderHeight / 2,
             position: "relative",
             cursor: "pointer",
           }}
           onClick={(e) => {
-            const x = e.clientX;
-            const initialX = initialPointerX.get();
-            const distance = x - initialX;
-            if (Math.abs(distance) < 4) {
-              const shouldBeChecked = checked.get() < 0.5;
-              checked.set(shouldBeChecked ? 1 : 0);
+            const distance = Math.abs(e.clientX - initialPointerX.get());
+            if (distance < 5) {
+              checked.set(checked.get() < 0.5 ? 1 : 0);
             }
           }}
         >
           {typeof window !== "undefined" && (
             <Filter
-              id="thumb-filter"
+              id="thumb-filter-refined"
               blur={blur}
               scaleRatio={scaleRatio}
               specularOpacity={specularOpacity}
@@ -273,42 +210,27 @@ export const Switch: React.FC = () => {
               refractiveIndex={1.5}
             />
           )}
+
           <motion.div
             className="absolute"
-            onTouchStart={(e) => {
-              e.stopPropagation();
-              const pointerX = e.touches[0].clientX;
-              pointerDown.set(1);
-              initialPointerX.set(pointerX);
-              previousPointerX.set(pointerX);
-            }}
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              pointerDown.set(1);
-              initialPointerX.set(e.clientX);
-              previousPointerX.set(e.clientX);
-            }}
+            onPointerDown={handlePointerDown}
             style={{
               height: thumbHeight,
               width: thumbWidth,
-              marginLeft:
-                -THUMB_REST_OFFSET +
-                (sliderHeight - thumbHeight * THUMB_REST_SCALE) / 2,
+              left: (sliderHeight - thumbHeight * THUMB_REST_SCALE) / 2 - THUMB_REST_OFFSET,
               x: useTransform(() => xRatio.get() * TRAVEL),
               y: "-50%",
+              top: "50%",
               borderRadius: thumbRadius,
-              top: sliderHeight / 2,
-              backdropFilter: `url(#thumb-filter)`,
+              backdropFilter: `url(#thumb-filter-refined)`,
               scaleX: objectScaleX,
               scaleY: objectScaleY,
-              backgroundColor: useTransform(
-                backgroundOpacity,
-                (op) => `rgba(255, 255, 255, ${op})`
-              ),
+              backgroundColor: useTransform(backgroundOpacity, (op) => `rgba(255, 255, 255, ${op})`),
               boxShadow,
             }}
           />
         </motion.div>
+        {/* 强制液态控制：现在能勾选了 */}
         <label className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs bg-white/10 dark:bg-black/10 backdrop-blur px-2 py-1 rounded-md flex items-center gap-2 text-black/80 dark:text-white/80">
           <input
             type="checkbox"
