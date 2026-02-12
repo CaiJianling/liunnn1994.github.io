@@ -33,26 +33,87 @@ export const Slider: React.FC = () => {
       ([m, base]) => (Number(m) || 0) * (Number(base) || 0)
     )
   );
+  // 缩小效果 - 与放大镜相反：拖拽时内容缩小（负值产生缩小效果）
+  const magnifyingScale = useSpring(
+    useTransform(isUp, (d): number => (d ? -24 : 24)),
+    {
+      stiffness: 250,
+      damping: 14,
+    }
+  );
 
   const trackRef = useRef<HTMLDivElement>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
+  const velocityX = useMotionValue(0);
 
   const SCALE_REST = 0.6;
   const SCALE_DRAG = 1;
   const thumbWidthRest = thumbWidth * SCALE_REST;
 
-  const scaleSpring = useSpring(
+  // 弹簧动画参数 - 来自 MagnifyingGlass 的配置
+  const objectScale = useSpring(
     useTransform(isUp, [0, 1], [SCALE_REST, SCALE_DRAG]),
-    {
-      damping: 80,
-      stiffness: 2000,
+    { stiffness: 340, damping: 20 }
+  );
+  const objectScaleY = useTransform(
+    (): number => {
+      const baseScale = objectScale.get();
+      const velocityFactor = Math.abs(velocityX.get()) / 3000;
+      const deformation = 1 - Math.min(velocityFactor, 0.3);
+      return baseScale * deformation;
     }
   );
+  const objectScaleX = useTransform((): number => {
+    const baseScale = objectScale.get();
+    const currentScaleY = objectScaleY.get();
+    // 确保 scaleX * scaleY 接近 baseScale^2（体积守恒）
+    return baseScale + (baseScale - currentScaleY);
+  });
 
   const backgroundOpacity = useSpring(useTransform(isUp, [0, 1], [1, 0.1]), {
-    damping: 80,
-    stiffness: 2000,
+    stiffness: 340,
+    damping: 20,
   });
+
+  // 阴影弹簧动画 - 静置时只有外阴影，拖拽时添加内阴影
+  const shadowSx = useSpring(
+    useTransform(isUp, [0, 1], [0, 4]),
+    { stiffness: 340, damping: 30 }
+  );
+  const shadowSy = useSpring(
+    useTransform(isUp, [0, 1], [4, 16]),
+    { stiffness: 340, damping: 30 }
+  );
+  const shadowAlpha = useSpring(
+    useTransform(isUp, [0, 1], [0.16, 0.22]),
+    {
+      stiffness: 220,
+      damping: 24,
+    }
+  );
+  const insetShadowAlpha = useSpring(
+    useTransform(isUp, [0, 1], [0, 0.27]),
+    {
+      stiffness: 220,
+      damping: 24,
+    }
+  );
+  const shadowBlur = useSpring(
+    useTransform(isUp, [0, 1], [9, 24]),
+    {
+      stiffness: 340,
+      damping: 30,
+    }
+  );
+  const boxShadow = useTransform(
+    () => {
+      const inset = isUp.get() > 0.5
+        ? `inset ${shadowSx.get() / 2}px ${shadowSy.get() / 2}px 24px rgba(0,0,0,${insetShadowAlpha.get()}),
+           inset ${-shadowSx.get() / 2}px ${-shadowSy.get() / 2}px 24px rgba(255,255,255,${insetShadowAlpha.get()})`
+        : '';
+      return `${shadowSx.get()}px ${shadowSy.get()}px ${shadowBlur.get()}px rgba(0,0,0,${shadowAlpha.get()})${inset ? ', ' + inset : ''}`;
+    }
+  );
 
   // End drag when releasing outside the element
   useEffect(() => {
@@ -141,6 +202,7 @@ export const Slider: React.FC = () => {
               scaleRatio={scaleRatio}
               specularOpacity={specularOpacity}
               specularSaturation={specularSaturation}
+              magnifyingScale={magnifyingScale}
               width={90}
               height={60}
               radius={30}
@@ -168,7 +230,8 @@ export const Slider: React.FC = () => {
             onDragStart={() => {
               pointerDown.set(1);
             }}
-            onDrag={(_) => {
+            onDrag={(_, info) => {
+              velocityX.set(info.velocity.x);
               const track = trackRef.current!.getBoundingClientRect();
               const thumb = thumbRef.current!.getBoundingClientRect();
 
@@ -187,6 +250,7 @@ export const Slider: React.FC = () => {
               );
             }}
             onDragEnd={() => {
+              velocityX.set(0);
               pointerDown.set(0);
             }}
             dragMomentum={false}
@@ -197,14 +261,15 @@ export const Slider: React.FC = () => {
               top: 0,
               borderRadius: thumbRadius,
               backdropFilter: `url(#thumb-filter-slider)`,
-              scale: scaleSpring,
+              scaleX: objectScaleX,
+              scaleY: objectScaleY,
               cursor: "pointer",
 
               backgroundColor: useTransform(
                 backgroundOpacity,
                 (op) => `rgba(255, 255, 255, ${op})`
               ),
-              boxShadow: "0 3px 14px rgba(0,0,0,0.1)",
+              boxShadow,
             }}
           />
         </motion.div>

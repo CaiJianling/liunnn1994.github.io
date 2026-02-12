@@ -189,14 +189,75 @@ export const Filter: React.FC<FilterProps> = ({
         result="displacement_map"
       />
 
+      {/* Dispersion effect: separate color channels with different refractive indices */}
+      <feComponentTransfer in="blurred_source" result="red_channel">
+        <feFuncR type="linear" slope="1" intercept="0"/>
+        <feFuncG type="linear" slope="0" intercept="0"/>
+        <feFuncB type="linear" slope="0" intercept="0"/>
+      </feComponentTransfer>
+      
+      <feComponentTransfer in="blurred_source" result="green_channel">
+        <feFuncR type="linear" slope="0" intercept="0"/>
+        <feFuncG type="linear" slope="1" intercept="0"/>
+        <feFuncB type="linear" slope="0" intercept="0"/>
+      </feComponentTransfer>
+      
+      <feComponentTransfer in="blurred_source" result="blue_channel">
+        <feFuncR type="linear" slope="0" intercept="0"/>
+        <feFuncG type="linear" slope="0" intercept="0"/>
+        <feFuncB type="linear" slope="1" intercept="0"/>
+      </feComponentTransfer>
+      
+      {/* Red channel with less refraction (lower refractive index) */}
       <motion.feDisplacementMap
-        in="blurred_source"
+        in="red_channel"
+        in2="displacement_map"
+        scale={useTransform(() => scale.get() * 0.8)}
+        xChannelSelector="R"
+        yChannelSelector="G"
+        result="displaced_red"
+      />
+      
+      {/* Green channel with medium refraction */}
+      <motion.feDisplacementMap
+        in="green_channel"
+        in2="displacement_map"
+        scale={useTransform(() => scale.get() * 0.9)}
+        xChannelSelector="R"
+        yChannelSelector="G"
+        result="displaced_green"
+      />
+      
+      {/* Blue channel with more refraction (higher refractive index) */}
+      <motion.feDisplacementMap
+        in="blue_channel"
         in2="displacement_map"
         scale={scale}
         xChannelSelector="R"
         yChannelSelector="G"
-        result="displaced"
+        result="displaced_blue"
       />
+      
+      {/* Combine the displaced color channels */}
+      <feBlend in="displaced_red" in2="displaced_green" mode="screen" result="displaced_rg"/>
+      <feBlend in="displaced_rg" in2="displaced_blue" mode="screen" result="displaced_combined"/>
+      
+      {/* Apply Gaussian blur to the entire displaced image */}
+      <motion.feGaussianBlur
+        in="displaced_combined"
+        stdDeviation={10}
+        result="displaced_blurred"
+      />
+      
+      {/* Adjust the opacity of the blurred image */}
+      <feComponentTransfer in="displaced_blurred" result="displaced_blurred_faded">
+        <feFuncA type="linear" slope="0.7"/>
+      </feComponentTransfer>
+      
+      {/* Create a simple overlay effect */}
+      {/* This will apply the blur to the entire image but it will be more noticeable at the edges */}
+      {/* due to the refraction effect already present there */}
+      <feBlend in="displaced_combined" in2="displaced_blurred_faded" mode="normal" result="displaced"/>
 
       <motion.feColorMatrix
         in="displaced"

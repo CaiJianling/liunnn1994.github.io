@@ -25,7 +25,7 @@ export const Switch: React.FC = () => {
   const xDragRatio = useMotionValue(0);
 
   const THUMB_REST_SCALE = 0.65;
-  const THUMB_ACTIVE_SCALE = 0.9;
+  const THUMB_ACTIVE_SCALE = 1;
 
   const THUMB_REST_OFFSET = ((1 - THUMB_REST_SCALE) * thumbWidth) / 2;
 
@@ -38,9 +38,17 @@ export const Switch: React.FC = () => {
   const checked = useMotionValue(1);
   const pointerDown = useMotionValue(0);
   const forceActive = useMotionValue(false);
-  const active = useTransform(() =>
+  const velocityX = useMotionValue(0);
+  const previousPointerX = useMotionValue(0);
+  const isUp = useTransform((): number =>
     forceActive.get() || pointerDown.get() > 0.5 ? 1 : 0
   );
+
+  // 平滑速度，减少抖动
+  const smoothedVelocityX = useSpring(velocityX, {
+    stiffness: 300,
+    damping: 30,
+  });
 
   //
   // GLOBAL POINTER-UP LISTENER
@@ -48,6 +56,7 @@ export const Switch: React.FC = () => {
   useEffect(() => {
     const onPointerUp = (e: MouseEvent | TouchEvent) => {
       pointerDown.set(0);
+      velocityX.set(0);
 
       const x =
         e instanceof MouseEvent ? e.clientX : e.changedTouches[0].clientX;
@@ -66,7 +75,7 @@ export const Switch: React.FC = () => {
       window.removeEventListener("mouseup", onPointerUp);
       window.removeEventListener("touchend", onPointerUp);
     };
-  }, [pointerDown, checked]);
+  }, []);
 
   //
   // SPRINGS
@@ -84,19 +93,43 @@ export const Switch: React.FC = () => {
     }),
     { damping: 80, stiffness: 1000 }
   );
+
+  // 液态玻璃缩放 - 与Slider相同
+  const magnifyingScale = useSpring(
+    useTransform(isUp, (d): number => (d ? -12 : 12)),
+    {
+      stiffness: 250,
+      damping: 14,
+    }
+  );
+
   const backgroundOpacity = useSpring(
-    useTransform(active, (v) => 1 - 0.9 * v),
+    useTransform(isUp, [0, 1], [1, 0.1]),
     { damping: 80, stiffness: 2000 }
   );
-  const thumbScale = useSpring(
-    useTransform(
-      active,
-      (v) => THUMB_REST_SCALE + (THUMB_ACTIVE_SCALE - THUMB_REST_SCALE) * v
-    ),
-    { damping: 80, stiffness: 2000 }
+
+  // 弹簧动画参数 - 拖拽时有形变
+  const objectScale = useSpring(
+    useTransform(isUp, [0, 1], [THUMB_REST_SCALE, THUMB_ACTIVE_SCALE]),
+    { stiffness: 340, damping: 20 }
   );
+  const objectScaleY = useTransform(
+    (): number => {
+      const baseScale = objectScale.get();
+      const velocityFactor = Math.abs(smoothedVelocityX.get()) / 1200;
+      const deformation = 1 - Math.min(velocityFactor, 0.35);
+      return baseScale * deformation;
+    }
+  );
+  const objectScaleX = useTransform((): number => {
+    const baseScale = objectScale.get();
+    const currentScaleY = objectScaleY.get();
+    // 确保 scaleX * scaleY 接近 baseScale^2（体积守恒）
+    return baseScale + (baseScale - currentScaleY);
+  });
+
   const scaleRatio = useSpring(
-    useTransform(() => (0.4 + 0.5 * active.get()) * refractionBase.get())
+    useTransform(() => (0.4 + 0.5 * isUp.get()) * refractionBase.get())
   );
   const considerChecked = useTransform(() => {
     const x = xDragRatio.get();
@@ -107,6 +140,46 @@ export const Switch: React.FC = () => {
   const backgroundColor = useTransform(
     useSpring(considerChecked, { damping: 80, stiffness: 1000 }),
     mix("#94949F77", "#3BBF4EEE")
+  );
+
+  // 阴影弹簧动画 - 静置时只有外阴影，拖拽时添加内阴影
+  const shadowSx = useSpring(
+    useTransform(isUp, [0, 1], [0, 4]),
+    { stiffness: 340, damping: 30 }
+  );
+  const shadowSy = useSpring(
+    useTransform(isUp, [0, 1], [4, 16]),
+    { stiffness: 340, damping: 30 }
+  );
+  const shadowAlpha = useSpring(
+    useTransform(isUp, [0, 1], [0.16, 0.22]),
+    {
+      stiffness: 220,
+      damping: 24,
+    }
+  );
+  const insetShadowAlpha = useSpring(
+    useTransform(isUp, [0, 1], [0, 0.27]),
+    {
+      stiffness: 220,
+      damping: 24,
+    }
+  );
+  const shadowBlur = useSpring(
+    useTransform(isUp, [0, 1], [9, 24]),
+    {
+      stiffness: 340,
+      damping: 30,
+    }
+  );
+  const boxShadow = useTransform(
+    () => {
+      const inset = isUp.get() > 0.5
+        ? `inset ${shadowSx.get() / 2}px ${shadowSy.get() / 2}px 24px rgba(0,0,0,${insetShadowAlpha.get()}),
+           inset ${-shadowSx.get() / 2}px ${-shadowSy.get() / 2}px 24px rgba(255,255,255,${insetShadowAlpha.get()})`
+        : '';
+      return `${shadowSx.get()}px ${shadowSy.get()}px ${shadowBlur.get()}px rgba(0,0,0,${shadowAlpha.get()})${inset ? ', ' + inset : ''}`;
+    }
   );
 
   const initialPointerX = useMotionValue(0);
@@ -134,6 +207,13 @@ export const Switch: React.FC = () => {
           const overflowSign = ratio < 0 ? -1 : 1;
           const dampedOverflow = (overflowSign * overflow) / 22;
           xDragRatio.set(Math.min(1, Math.max(0, ratio)) + dampedOverflow);
+          // 更新速度 - 计算当前帧与上一帧的差值
+          if (pointerDown.get() > 0.5) {
+            const prevX = previousPointerX.get();
+            const currentVelocity = clientX - prevX;
+            velocityX.set(currentVelocity * 5); // 降低倍数减少抖动
+            previousPointerX.set(clientX);
+          }
         }}
         onTouchMove={(e) => {
           if (!sliderRef.current) return;
@@ -146,6 +226,13 @@ export const Switch: React.FC = () => {
           const overflowSign = ratio < 0 ? -1 : 1;
           const dampedOverflow = (overflowSign * overflow) / 22;
           xDragRatio.set(Math.min(1, Math.max(0, ratio)) + dampedOverflow);
+          // 更新速度 - 计算当前帧与上一帧的差值
+          if (pointerDown.get() > 0.5 && e.touches.length > 0) {
+            const prevX = previousPointerX.get();
+            const currentVelocity = clientX - prevX;
+            velocityX.set(currentVelocity * 5); // 降低倍数减少抖动
+            previousPointerX.set(clientX);
+          }
         }}
       >
         <motion.div
@@ -176,6 +263,7 @@ export const Switch: React.FC = () => {
               scaleRatio={scaleRatio}
               specularOpacity={specularOpacity}
               specularSaturation={specularSaturation}
+              magnifyingScale={magnifyingScale}
               width={146}
               height={92}
               radius={46}
@@ -192,11 +280,13 @@ export const Switch: React.FC = () => {
               const pointerX = e.touches[0].clientX;
               pointerDown.set(1);
               initialPointerX.set(pointerX);
+              previousPointerX.set(pointerX);
             }}
             onMouseDown={(e) => {
               e.stopPropagation();
               pointerDown.set(1);
               initialPointerX.set(e.clientX);
+              previousPointerX.set(e.clientX);
             }}
             style={{
               height: thumbHeight,
@@ -209,20 +299,13 @@ export const Switch: React.FC = () => {
               borderRadius: thumbRadius,
               top: sliderHeight / 2,
               backdropFilter: `url(#thumb-filter)`,
-              scale: thumbScale,
+              scaleX: objectScaleX,
+              scaleY: objectScaleY,
               backgroundColor: useTransform(
                 backgroundOpacity,
                 (op) => `rgba(255, 255, 255, ${op})`
               ),
-              boxShadow: useTransform(() => {
-                const isPressed = pointerDown.get() > 0.5;
-                return (
-                  "0 4px 22px rgba(0,0,0,0.1)" +
-                  (isPressed
-                    ? ", inset 2px 7px 24px rgba(0,0,0,0.09), inset -2px -7px 24px rgba(255,255,255,0.09)"
-                    : "")
-                );
-              }),
+              boxShadow,
             }}
           />
         </motion.div>
