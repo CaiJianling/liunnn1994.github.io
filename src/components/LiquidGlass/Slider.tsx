@@ -13,12 +13,12 @@ import { Filter } from "./Filter";
 export const Slider: React.FC = () => {
   const min = 0;
   const max = 100;
-  const initialValue = 10;
+  const initialValue = 50;
 
   // 初始值
   const value = useMotionValue(initialValue); // 0-100
 
-  const sliderHeight = 8;
+  const sliderHeight = 10;
   const sliderWidth = 400;
   const thumbWidth = 90;
   const thumbHeight = 60;
