@@ -4,6 +4,8 @@ import {
   useSpring,
   useTransform,
   animate,
+  useVelocity,
+  useMotionValueEvent,
 } from "motion/react";
 import React, { useEffect, useRef } from "react";
 import { Filter } from "./Filter";
@@ -11,7 +13,10 @@ import { Filter } from "./Filter";
 export const Slider: React.FC = () => {
   const min = 0;
   const max = 100;
-  const value = useMotionValue(10); // 0-100
+  const initialValue = 10;
+
+  // 初始值
+  const value = useMotionValue(initialValue); // 0-100
 
   const sliderHeight = 14;
   const sliderWidth = 330;
@@ -20,8 +25,22 @@ export const Slider: React.FC = () => {
   const thumbRadius = 30;
 
   // --- 核心物理参数 ---
-  const MAX_STRETCH = sliderWidth * 0.1; // 最大拉伸 10% (33px)
-  const STRETCH_RESISTANCE = 0.4; // 拉伸阻尼 (越小拉得越慢)
+  const MAX_STRETCH = sliderWidth * 0.1; // 最大拉伸 10%
+  const STRETCH_RESISTANCE = 0.4; // 拉伸阻尼
+
+  const SCALE_REST = 0.6;
+  const SCALE_DRAG = 1;
+  const thumbWidthRest = thumbWidth * SCALE_REST; // 54px
+
+  // 计算滑块可移动的总物理距离 (330 - 90 = 240)
+  const maxDragDistance = sliderWidth - thumbWidth;
+
+  // --- 关键修改点 1: 使用 x MotionValue 驱动位置 ---
+  // 根据初始 value 计算初始 x 位置
+  const x = useMotionValue((initialValue / 100) * maxDragDistance);
+
+  // --- 关键修改点 2: 自动获取 x 的物理速度，用于惯性形变 ---
+  const velocityX = useVelocity(x);
 
   // Use numeric MotionValue (0/1) instead of boolean
   const pointerDown = useMotionValue(0);
@@ -33,6 +52,45 @@ export const Slider: React.FC = () => {
 
   // --- 越界与形变逻辑 ---
   const overshoot = useMotionValue(0);
+
+  // 监听 x 的变化，实时计算 value 和 overshoot
+  // 无论是拖拽中，还是松手后的惯性滑动中，这里都会执行，从而带动蓝色进度条
+  useMotionValueEvent(x, "change", (latestX) => {
+    // 1. 计算 Value (限制在 0-100)
+    // 使用分段线性映射：两端加速，中间匀速
+    const clampedX = Math.max(0, Math.min(maxDragDistance, latestX));
+    const linearProgress = clampedX / maxDragDistance;
+
+    // 分段映射：
+    // 0%-5%: 进度条从 0% 走到 15%（加速，滑块走 5%，进度条走 15%）
+    // 5%-95%: 进度条从 15% 走到 85%（匀速，滑块走 90%，进度条走 70%）
+    // 95%-100%: 进度条从 85% 走到 100%（加速，滑块走 5%，进度条走 15%）
+    let easedProgress;
+    if (linearProgress < 0.05) {
+      // 0-5% 区间：加速
+      easedProgress = linearProgress * 3; // 0->0.05 映射到 0->0.15
+    } else if (linearProgress < 0.95) {
+      // 5-95% 区间：匀速
+      easedProgress = 0.15 + (linearProgress - 0.05) * 0.777; // 0.05->0.95 映射到 0.15->0.85
+    } else {
+      // 95-100% 区间：加速
+      easedProgress = 0.85 + (linearProgress - 0.95) * 3; // 0.95->1.0 映射到 0.85->1.0
+    }
+
+    value.set(easedProgress * 100);
+
+    // 2. 计算 Overshoot (越界量)
+    // 只在按下状态下更新 overshoot，松手后让 spring 自然回弹
+    if (pointerDown.get() > 0.5) {
+      let over = 0;
+      if (latestX < 0) {
+        over = latestX;
+      } else if (latestX > maxDragDistance) {
+        over = latestX - maxDragDistance;
+      }
+      overshoot.set(over);
+    }
+  });
   
   // 橡皮筋弹簧
   const overshootSpring = useSpring(overshoot, {
@@ -95,29 +153,36 @@ export const Slider: React.FC = () => {
   // 新增：用于在拖拽开始时缓存轨道位置，防止轨道变形导致计算抖动
   const trackBoundsRef = useRef<DOMRect | null>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
-  const velocityX = useMotionValue(0);
 
-  const SCALE_REST = 0.6;
-  const SCALE_DRAG = 1;
-  const thumbWidthRest = thumbWidth * SCALE_REST;
+  // --- 关键修改点 3: 形状与速度挂钩 ---
 
-  const objectScale = useSpring(
+  // 基础缩放：松手(isUp=0)时变回 0.6 (白色椭圆)，按下时为 1.0
+  const baseScale = useSpring(
     useTransform(isUp, [0, 1], [SCALE_REST, SCALE_DRAG]),
     { stiffness: 340, damping: 20 }
   );
-  
-  const objectScaleY = useTransform((): number => {
-    const baseScale = objectScale.get();
-    const velocityFactor = Math.abs(velocityX.get()) / 3000;
-    const deformation = 1 - Math.min(velocityFactor, 0.3);
-    return baseScale * deformation;
-  });
-  
-  const objectScaleX = useTransform((): number => {
-    const baseScale = objectScale.get();
-    const currentScaleY = objectScaleY.get();
-    return baseScale + (baseScale - currentScaleY);
-  });
+
+  // 动态形变：根据 velocityX 自动计算。
+  // 松手后，velocity 不会立即归零，而是随惯性衰减，因此形变也会平滑恢复。
+  const objectScaleY = useTransform(
+    [baseScale, velocityX],
+    ([s, v]) => {
+      const velocityFactor = Math.abs(v as number) / 3000;
+      // 限制最大形变，防止过扁
+      const deformation = 1 - Math.min(velocityFactor, 0.3);
+      return (s as number) * deformation;
+    }
+  );
+
+  const objectScaleX = useTransform(
+    [baseScale, objectScaleY],
+    ([s, sy]) => {
+      // 保持面积近似，压扁时变宽
+      const currentScale = s as number;
+      const currentScaleY = sy as number;
+      return currentScale + (currentScale - currentScaleY);
+    }
+  );
 
   const backgroundOpacity = useSpring(useTransform(isUp, [0, 1], [1, 0.1]), {
     stiffness: 340,
@@ -240,9 +305,12 @@ export const Slider: React.FC = () => {
             ref={thumbRef}
             drag="x"
             dragElastic={0.1}
+            // --- 关键修改点 4: 开启惯性并调整阻尼 ---
+            dragMomentum={true}
+            dragTransition={{ power: 0.15, timeConstant: 250 }} // 控制松手后滑动的距离和时间
             dragConstraints={{
-              left: -thumbWidthRest / 3,
-              right: sliderWidth - thumbWidth + thumbWidthRest / 3,
+              left: -thumbWidthRest / 3, // 保持原有的越界手感
+              right: maxDragDistance + thumbWidthRest / 3,
             }}
             onMouseDown={() => {
               pointerDown.set(1);
@@ -258,45 +326,17 @@ export const Slider: React.FC = () => {
               }
             }}
             onDrag={(_, info) => {
-              velocityX.set(info.velocity.x);
-              
-              // 使用缓存的 bounds 进行计算
-              const track = trackBoundsRef.current || trackRef.current!.getBoundingClientRect();
-              const thumb = thumbRef.current!.getBoundingClientRect();
-
-              // 注意：这里需要根据 trackXStyle 的位移稍微修正一下计算中心的逻辑
-              // 但因为我们锁定了 trackBoundsRef，所以计算逻辑是基于"未变形前"的物理位置，
-              // 这通常是用户手感最自然的方式。
-
-              const x0 = track.left + thumbWidthRest / 2;
-              const x100 = track.right - thumbWidthRest / 2;
-              const trackInsideWidth = x100 - x0;
-              const thumbCenterX = thumb.left + thumb.width / 2;
-
-              const currentX = Math.max(x0, Math.min(x100, thumbCenterX));
-              const ratio = (currentX - x0) / trackInsideWidth;
-              
-              value.set(
-                Math.max(min, Math.min(max, ratio * (max - min) + min))
-              );
-
-              // 计算原始越界量
-              let over = 0;
-              if (thumbCenterX < x0) {
-                over = thumbCenterX - x0;
-              } else if (thumbCenterX > x100) {
-                over = thumbCenterX - x100;
-              }
-              overshoot.set(over);
+              // 不再需要手动计算 value 和 overshoot，因为 useMotionValueEvent 会自动处理
             }}
             onDragEnd={() => {
-              velocityX.set(0);
               pointerDown.set(0);
               trackBoundsRef.current = null; // 清除缓存
+              // 确保 overshoot 归零，让滑轨回弹
               animate(overshoot, 0, { type: "spring", stiffness: 400, damping: 30 });
+              // 注意：不再强制 velocity 为 0
             }}
-            dragMomentum={false}
             className="absolute"
+            // 直接应用计算好的动态样式
             style={{
               height: thumbHeight,
               width: thumbWidth,
@@ -311,6 +351,7 @@ export const Slider: React.FC = () => {
                 (op) => `rgba(255, 255, 255, ${op})`
               ),
               boxShadow,
+              x, // 绑定 x 从而让 useVelocity 生效
             }}
           />
         </motion.div>
