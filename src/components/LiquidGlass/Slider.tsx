@@ -42,7 +42,7 @@ export const Slider: React.FC = () => {
   const totalSlideRange = constraintsRight - constraintsLeft;
 
   // --- 加速参数 ---
-  const EDGE_ACCELERATION_RANGE = 0.01; // 两端加速占用的物理轨道比例 (1%)
+  const EDGE_ACCELERATION_RANGE = 0.02; // 两端加速占用的物理轨道比例 (2%)
 
   // --- Motion Values ---
   // 初始化 x：将 50% 映射到物理中心
