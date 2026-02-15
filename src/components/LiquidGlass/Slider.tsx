@@ -7,7 +7,7 @@ import {
   useVelocity,
   useMotionValueEvent,
 } from "motion/react";
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useCallback } from "react";
 import { Filter } from "./Filter";
 
 export const Slider: React.FC = () => {
@@ -41,13 +41,36 @@ export const Slider: React.FC = () => {
   // 滑块总可滑动范围 (328 - (-18) = 346)
   const totalSlideRange = constraintsRight - constraintsLeft;
 
-  // --- 吸附参数 ---
-  const SNAP_THRESHOLD = 0.05; // 5% 的吸附触发范围
-  const snapDistance = totalSlideRange * SNAP_THRESHOLD; // 触发吸附的距离阈值
+  // --- 加速参数 ---
+  const EDGE_ACCELERATION_RANGE = 0.01; // 两端加速占用的物理轨道比例 (1%)
 
   // --- Motion Values ---
   // 初始化 x：将 50% 映射到物理中心
-  const initialX = constraintsLeft + (initialValue / 100) * totalSlideRange;
+  // 辅助函数：将 value 转换为 x (用于初始化和吸附)
+  const valueToX = useCallback((targetValue: number) => {
+    const easedProgress = Math.max(0, Math.min(1, targetValue / 100));
+    let linearProgress;
+
+    if (easedProgress < 0.05) {
+      // 0% - 5% 对应物理轨道 0 - EDGE_ACCELERATION_RANGE
+      linearProgress = (easedProgress / 0.05) * EDGE_ACCELERATION_RANGE;
+    } else if (easedProgress <= 0.95) {
+      // 5% - 95% 对应物理轨道 EDGE_ACCELERATION_RANGE - (1-EDGE_ACCELERATION_RANGE)
+      linearProgress =
+        EDGE_ACCELERATION_RANGE +
+        ((easedProgress - 0.05) / 0.9) * (1 - 2 * EDGE_ACCELERATION_RANGE);
+    } else {
+      // 95% - 100% 对应物理轨道 (1-EDGE_ACCELERATION_RANGE) - 1
+      linearProgress =
+        1 -
+        EDGE_ACCELERATION_RANGE +
+        ((easedProgress - 0.95) / 0.05) * EDGE_ACCELERATION_RANGE;
+    }
+
+    return constraintsLeft + linearProgress * totalSlideRange;
+  }, [constraintsLeft, totalSlideRange]);
+
+  const initialX = valueToX(initialValue);
   const x = useMotionValue(initialX);
   const velocityX = useVelocity(x);
   const pointerDown = useMotionValue(0);
@@ -61,54 +84,47 @@ export const Slider: React.FC = () => {
   const overshoot = useMotionValue(0);
 
   useMotionValueEvent(x, "change", (latestX) => {
-    // 1. 计算 Value (将物理坐标 [constraintsLeft, constraintsRight] 映射到 [0, 100])
-    // 先把 x 限制在物理边界内
-    const clampedX = Math.max(constraintsLeft, Math.min(constraintsRight, latestX));
-    // 计算线性进度 0-1
-    const linearProgress = (clampedX - constraintsLeft) / totalSlideRange;
+    // 1. 计算线性进度 0-1 (物理位置比例)
+    const rawProgress = (latestX - constraintsLeft) / totalSlideRange;
+    const linearProgress = Math.max(0, Math.min(1, rawProgress));
 
-    // 第一步：线性映射得到调整后的百分比（5-95 映射到 0-100）
-    let mappedProgress;
-    if (linearProgress < 0.05) {
-      mappedProgress = 0;
-    } else if (linearProgress > 0.95) {
-      mappedProgress = 1;
-    } else {
-      // 将 0.05-0.95 映射到 0-1
-      mappedProgress = (linearProgress - 0.05) / 0.9;
-    }
-
-    // 第二步：基于调整后的百分比进行分段映射
+    // 2. 核心修改：新的分段映射逻辑 (实现 0-5% 和 95-100% 加速)
     let easedProgress;
-    if (mappedProgress < 0.05) {
-      easedProgress = mappedProgress * 3;
-    } else if (mappedProgress < 0.95) {
-      easedProgress = 0.15 + (mappedProgress - 0.05) * 0.777;
+    if (linearProgress < EDGE_ACCELERATION_RANGE) {
+      // 物理左端 0-2% -> 数值 0-5% (加速)
+      easedProgress = (linearProgress / EDGE_ACCELERATION_RANGE) * 0.05;
+    } else if (linearProgress <= 1 - EDGE_ACCELERATION_RANGE) {
+      // 物理中间 2%-98% -> 数值 5-95% (线性)
+      const middleProgress =
+        (linearProgress - EDGE_ACCELERATION_RANGE) /
+        (1 - 2 * EDGE_ACCELERATION_RANGE);
+      easedProgress = 0.05 + middleProgress * 0.9;
     } else {
-      easedProgress = 0.85 + (mappedProgress - 0.95) * 3;
+      // 物理右端 98%-100% -> 数值 95-100% (加速)
+      const rightProgress =
+        (linearProgress - (1 - EDGE_ACCELERATION_RANGE)) /
+        EDGE_ACCELERATION_RANGE;
+      easedProgress = 0.95 + rightProgress * 0.05;
     }
 
-    const currentValue = easedProgress * 100;
+    const currentValue = Math.max(0, Math.min(100, easedProgress * 100));
     value.set(currentValue);
 
-    // 2. 计算 Overshoot - 【修改逻辑】超出物理边界才算拉伸
+    // 3. 计算 Overshoot
     if (pointerDown.get() > 0.5) {
       let over = 0;
-      
-      // 只有当 x 超出 constraintsLeft 或 constraintsRight 时才计算拉伸
       if (latestX < constraintsLeft) {
-        over = latestX - constraintsLeft; // 负数
+        over = latestX - constraintsLeft;
       } else if (latestX > constraintsRight) {
-        over = latestX - constraintsRight; // 正数
+        over = latestX - constraintsRight;
       }
-      
       overshoot.set(over);
     }
   });
   
   const overshootSpring = useSpring(overshoot, { stiffness: 400, damping: 30 });
 
-  // 轨道形变逻辑 (保持不变，但注意 overshoot 的基准变了)
+  // 轨道形变逻辑
   const trackScaleY = useTransform(overshootSpring, (x) => {
     const damped = Math.max(-MAX_STRETCH, Math.min(MAX_STRETCH, x * STRETCH_RESISTANCE));
     const v = 1 - Math.abs(damped) / (sliderWidth * 1.5); 
@@ -130,7 +146,7 @@ export const Slider: React.FC = () => {
     }
   });
 
-  // --- 其他视觉效果完全保持不变 ---
+  // --- 其他视觉效果 ---
   const blur = useMotionValue(0);
   const specularOpacity = useMotionValue(0.4);
   const specularSaturation = useMotionValue(7);
@@ -150,7 +166,7 @@ export const Slider: React.FC = () => {
   const trackBoundsRef = useRef<DOMRect | null>(null);
   const thumbRef = useRef<HTMLDivElement>(null);
 
-  // --- 动态形变逻辑完全保持不变 ---
+  // --- 动态形变逻辑 ---
   const baseScale = useSpring(
     useTransform(isUp, [0, 1], [SCALE_REST, SCALE_DRAG]),
     { stiffness: 340, damping: 20 }
@@ -176,7 +192,7 @@ export const Slider: React.FC = () => {
 
   const backgroundOpacity = useSpring(useTransform(isUp, [0, 1], [1, 0.1]), { stiffness: 340, damping: 20 });
   const shadowSx = useSpring(useTransform(isUp, [0, 1], [0, 4]), { stiffness: 340, damping: 30 });
-  const shadowSy = useSpring(useTransform(isUp, [0, 1], [4, 16]), { stiffness: 340, damping: 30 });
+  const shadowSy = useSpring(useTransform(isUp, [0, 1], [0, 4]), { stiffness: 340, damping: 30 });
   const shadowAlpha = useSpring(useTransform(isUp, [0, 1], [0.16, 0.22]), { stiffness: 220, damping: 24 });
   const insetShadowAlpha = useSpring(useTransform(isUp, [0, 1], [0, 0.27]), { stiffness: 220, damping: 24 });
   const shadowBlur = useSpring(useTransform(isUp, [0, 1], [9, 24]), { stiffness: 340, damping: 30 });
@@ -311,23 +327,22 @@ export const Slider: React.FC = () => {
               pointerDown.set(0);
               trackBoundsRef.current = null;
               
-              const currentX = x.get();
-              let targetX: number | null = null;
+              const currentValue = value.get();
+              let targetValue: number | null = null;
               
-              // 吸附逻辑：距离边界近则吸附
-              if (Math.abs(currentX - constraintsLeft) < snapDistance) {
-                targetX = constraintsLeft;
-              } 
-              else if (Math.abs(currentX - constraintsRight) < snapDistance) {
-                targetX = constraintsRight;
+              // 核心修改：基于 percentageText (value) 的吸附逻辑
+              if (currentValue < 5) {
+                targetValue = 0;
+              } else if (currentValue > 95) {
+                targetValue = 100;
               }
 
-              if (targetX !== null) {
-                animate(x.get(), targetX, {
+              if (targetValue !== null) {
+                const targetX = valueToX(targetValue);
+                animate(x, targetX, {
                   type: "spring",
                   stiffness: 400,
                   damping: 30,
-                  onUpdate: (latest) => x.set(latest)
                 });
               }
 
@@ -374,7 +389,7 @@ export const Slider: React.FC = () => {
         </label>
       </div>
 
-      {/* 参数控制区域完全保持不变 */}
+      {/* 参数控制区域 */}
       <div className="mt-8 space-y-3 text-black/80 dark:text-white/80">
         <div className="flex items-center gap-4">
             <div className="uppercase tracking-[0.14em] text-[10px] opacity-70 select-none">
