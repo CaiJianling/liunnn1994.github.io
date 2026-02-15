@@ -42,7 +42,7 @@ export const Slider: React.FC = () => {
   const totalSlideRange = constraintsRight - constraintsLeft;
 
   // --- 加速参数 ---
-  const EDGE_ACCELERATION_RANGE = 0.02; // 两端加速占用的物理轨道比例 (2%)
+  const EDGE_ACCELERATION_RANGE = 0.05; // 两端加速占用的物理轨道比例 (5%)
 
   // --- Motion Values ---
   // 初始化 x：将 50% 映射到物理中心
@@ -51,20 +51,15 @@ export const Slider: React.FC = () => {
     const easedProgress = Math.max(0, Math.min(1, targetValue / 100));
     let linearProgress;
 
-    if (easedProgress < 0.05) {
-      // 0% - 5% 对应物理轨道 0 - EDGE_ACCELERATION_RANGE
-      linearProgress = (easedProgress / 0.05) * EDGE_ACCELERATION_RANGE;
-    } else if (easedProgress <= 0.95) {
-      // 5% - 95% 对应物理轨道 EDGE_ACCELERATION_RANGE - (1-EDGE_ACCELERATION_RANGE)
-      linearProgress =
-        EDGE_ACCELERATION_RANGE +
-        ((easedProgress - 0.05) / 0.9) * (1 - 2 * EDGE_ACCELERATION_RANGE);
+    if (easedProgress < 0.1) {
+      // 0% - 10% 对应物理轨道 0 - 0.05
+      linearProgress = (easedProgress / 0.1) * 0.05;
+    } else if (easedProgress <= 0.9) {
+      // 10% - 90% 对应物理轨道 0.05 - 0.95
+      linearProgress = 0.05 + ((easedProgress - 0.1) / 0.8) * 0.9;
     } else {
-      // 95% - 100% 对应物理轨道 (1-EDGE_ACCELERATION_RANGE) - 1
-      linearProgress =
-        1 -
-        EDGE_ACCELERATION_RANGE +
-        ((easedProgress - 0.95) / 0.05) * EDGE_ACCELERATION_RANGE;
+      // 90% - 100% 对应物理轨道 0.95 - 1
+      linearProgress = 0.95 + ((easedProgress - 0.9) / 0.1) * 0.05;
     }
 
     return constraintsLeft + linearProgress * totalSlideRange;
@@ -88,23 +83,19 @@ export const Slider: React.FC = () => {
     const rawProgress = (latestX - constraintsLeft) / totalSlideRange;
     const linearProgress = Math.max(0, Math.min(1, rawProgress));
 
-    // 2. 核心修改：新的分段映射逻辑 (实现 0-5% 和 95-100% 加速)
+    // 2. 分段映射逻辑：物理左端0-5% -> 数值0-10%加速，物理中间5-95% -> 数值10-90%线性，物理右端95-100% -> 数值90-100%加速
     let easedProgress;
-    if (linearProgress < EDGE_ACCELERATION_RANGE) {
-      // 物理左端 0-2% -> 数值 0-5% (加速)
-      easedProgress = (linearProgress / EDGE_ACCELERATION_RANGE) * 0.05;
-    } else if (linearProgress <= 1 - EDGE_ACCELERATION_RANGE) {
-      // 物理中间 2%-98% -> 数值 5-95% (线性)
-      const middleProgress =
-        (linearProgress - EDGE_ACCELERATION_RANGE) /
-        (1 - 2 * EDGE_ACCELERATION_RANGE);
-      easedProgress = 0.05 + middleProgress * 0.9;
+    if (linearProgress < 0.05) {
+      // 物理左端 0-5% -> 数值 0-10% (加速)
+      easedProgress = (linearProgress / 0.05) * 0.1;
+    } else if (linearProgress <= 0.95) {
+      // 物理中间 5%-95% -> 数值 10-90% (线性)
+      const middleProgress = (linearProgress - 0.05) / 0.9;
+      easedProgress = 0.1 + middleProgress * 0.8;
     } else {
-      // 物理右端 98%-100% -> 数值 95-100% (加速)
-      const rightProgress =
-        (linearProgress - (1 - EDGE_ACCELERATION_RANGE)) /
-        EDGE_ACCELERATION_RANGE;
-      easedProgress = 0.95 + rightProgress * 0.05;
+      // 物理右端 95%-100% -> 数值 90-100% (加速)
+      const rightProgress = (linearProgress - 0.95) / 0.05;
+      easedProgress = 0.9 + rightProgress * 0.1;
     }
 
     const currentValue = Math.max(0, Math.min(100, easedProgress * 100));
@@ -228,16 +219,16 @@ export const Slider: React.FC = () => {
   // 创建一个显示百分比的motion值
   const percentageText = useTransform(value, (v) => `${Math.round(v)}%`);
 
-  // 创建映射后的百分比（将5-95映射到0-100）
+  // 创建映射后的百分比（将10-90映射到0-100）
   const mappedPercentageText = useTransform(value, (v) => {
     let mapped = 0;
-    if (v < 5) {
+    if (v < 10) {
       mapped = 0;
-    } else if (v > 95) {
+    } else if (v > 90) {
       mapped = 100;
     } else {
-      // 将 5-95 映射到 0-100
-      mapped = ((v - 5) / 90) * 100;
+      // 将 10-90 映射到 0-100
+      mapped = ((v - 10) / 80) * 100;
     }
     return `${Math.round(mapped)}%`;
   });
@@ -326,14 +317,14 @@ export const Slider: React.FC = () => {
             onDragEnd={() => {
               pointerDown.set(0);
               trackBoundsRef.current = null;
-              
+
               const currentValue = value.get();
               let targetValue: number | null = null;
-              
-              // 核心修改：基于 percentageText (value) 的吸附逻辑
-              if (currentValue < 5) {
+
+              // 基于值的吸附逻辑：小于10%吸附到0，大于90%吸附到100
+              if (currentValue < 10) {
                 targetValue = 0;
-              } else if (currentValue > 95) {
+              } else if (currentValue > 90) {
                 targetValue = 100;
               }
 
