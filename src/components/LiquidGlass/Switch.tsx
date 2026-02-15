@@ -230,6 +230,17 @@ export const Switch: React.FC = () => {
             }}
           />
         </motion.div>
+        {/* 开关状态指示器 */}
+        <motion.div
+          className="absolute bottom-10 left-1/2 -translate-x-1/2 text-sm font-medium text-black/80 dark:text-white/80"
+          style={{
+            opacity: useTransform(checked, (v) => v > 0.5 ? 1 : 0.5),
+          }}
+        >
+          <motion.span>
+            {useTransform(checked, (v) => v > 0.5 ? "开启" : "关闭") as any}
+          </motion.span>
+        </motion.div>
         {/* 强制液态控制：现在能勾选了 */}
         <label className="absolute bottom-2 left-1/2 -translate-x-1/2 text-xs bg-white/10 dark:bg-black/10 backdrop-blur px-2 py-1 rounded-md flex items-center gap-2 text-black/80 dark:text-white/80">
           <input

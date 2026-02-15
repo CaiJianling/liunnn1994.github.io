@@ -19,7 +19,7 @@ export const Slider: React.FC = () => {
   const value = useMotionValue(initialValue); // 0-100
 
   const sliderHeight = 10;
-  const sliderWidth = 400;
+  const sliderWidth = 480;
   const thumbWidth = 90;
   const thumbHeight = 60;
   const thumbRadius = 30;
