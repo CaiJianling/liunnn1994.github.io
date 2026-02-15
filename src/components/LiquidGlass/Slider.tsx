@@ -144,10 +144,7 @@ export const Slider: React.FC = () => {
     )
   );
   
-  const magnifyingScale = useSpring(
-    useTransform(isUp, (d): number => (d ? -24 : 24)),
-    { stiffness: 250, damping: 14 }
-  );
+  const magnifyingScale: undefined = undefined;
 
   const trackRef = useRef<HTMLDivElement>(null);
   // 新增：用于在拖拽开始时缓存轨道位置，防止轨道变形导致计算抖动
