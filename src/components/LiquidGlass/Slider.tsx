@@ -401,8 +401,8 @@ export const Slider: React.FC = () => {
               size={0.5}
               fillContainer
               defaultValue={specularOpacity.get() * 100}
-              onChange={(value) => {
-                specularOpacity.set(value / 100);
+              onChange={(mappedValue) => {
+                specularOpacity.set(mappedValue / 100);
               }}
             />
           </div>

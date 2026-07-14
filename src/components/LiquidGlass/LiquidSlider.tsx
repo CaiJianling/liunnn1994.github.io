@@ -153,7 +153,7 @@ export const LiquidSlider: React.FC<LiquidSliderProps> = ({
       mappedValue = ((currentValue - 10) / 80) * 100;
     }
 
-    onChange?.(Math.round(currentValue), Math.round(mappedValue));
+    onChange?.(Math.round(mappedValue), Math.round(currentValue));
 
     if (pointerDown.get() > 0.5) {
       let over = 0;
@@ -349,12 +349,13 @@ export const LiquidSlider: React.FC<LiquidSliderProps> = ({
           onDragEnd={() => {
             pointerDown.set(0);
 
-            const currentValue = value.get();
+            const SNAP_THRESHOLD = 30 * scale;
+            const currentX = x.get();
             let targetValue: number | null = null;
 
-            if (currentValue < 10) {
+            if (currentX < SNAP_THRESHOLD) {
               targetValue = 0;
-            } else if (currentValue > 90) {
+            } else if (currentX > maxDragDistance - SNAP_THRESHOLD) {
               targetValue = 100;
             }
 
