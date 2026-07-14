@@ -1,8 +1,7 @@
 const primaryColorScheme = "";
 
-const currentTheme = localStorage.getItem("theme");
-
 function getPreferTheme() {
+  const currentTheme = localStorage.getItem("theme");
   if (currentTheme) return currentTheme;
   if (primaryColorScheme) return primaryColorScheme;
   return window.matchMedia("(prefers-color-scheme: dark)").matches
@@ -29,6 +28,19 @@ function reflectPreference() {
       ?.setAttribute("content", bgColor);
   }
 }
+
+function toggleTheme() {
+  themeValue = themeValue === "dark" ? "light" : "dark";
+  setPreference();
+}
+
+function setTheme(theme) {
+  themeValue = theme;
+  setPreference();
+}
+
+window.toggleTheme = toggleTheme;
+window.setTheme = setTheme;
 
 reflectPreference();
 

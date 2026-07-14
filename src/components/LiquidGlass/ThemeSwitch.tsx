@@ -143,6 +143,22 @@ export const ThemeSwitch: React.FC<ThemeSwitchProps> = ({
   };
 
   useEffect(() => {
+    const unsubscribe = checked.on("change", (newValue) => {
+      const themeValue = newValue > 0.5 ? "dark" : "light";
+      localStorage.setItem("theme", themeValue);
+      document.firstElementChild?.setAttribute("data-theme", themeValue);
+      const body = document.body;
+      if (body) {
+        const computedStyles = window.getComputedStyle(body);
+        const bgColor = computedStyles.backgroundColor;
+        document.querySelector("meta[name='theme-color']")?.setAttribute("content", bgColor);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
     const handleGlobalUpdate = (e: MouseEvent | TouchEvent) => {
       if (pointerDown.get() < 0.5) return;
 
@@ -184,15 +200,31 @@ export const ThemeSwitch: React.FC<ThemeSwitchProps> = ({
     };
   }, [TRAVEL]);
 
+
+
   return (
     <div
       style={{
-        transform: `scale(${scale})`,
-        transformOrigin: "center",
+        width: SLIDER_WIDTH * scale,
+        height: SLIDER_HEIGHT * scale,
+        position: "relative",
       }}
       className="touch-none"
     >
-      <motion.div
+      <div
+        style={{
+          transform: `scale(${scale})`,
+          transformOrigin: "center",
+          width: SLIDER_WIDTH,
+          height: SLIDER_HEIGHT,
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          marginLeft: -SLIDER_WIDTH / 2,
+          marginTop: -SLIDER_HEIGHT / 2,
+        }}
+      >
+        <motion.div
         ref={sliderRef}
         style={{
           width: SLIDER_WIDTH,
@@ -246,6 +278,7 @@ export const ThemeSwitch: React.FC<ThemeSwitchProps> = ({
           }}
         />
       </motion.div>
+      </div>
     </div>
   );
 };
