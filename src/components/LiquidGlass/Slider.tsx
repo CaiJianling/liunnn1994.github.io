@@ -9,6 +9,7 @@ import {
 } from "motion/react";
 import React, { useEffect, useRef, useCallback } from "react";
 import { Filter } from "./Filter";
+import { LiquidSlider } from "./LiquidSlider";
 
 export const Slider: React.FC = () => {
   const min = 0;
@@ -395,17 +396,16 @@ export const Slider: React.FC = () => {
           <motion.span className="w-14 text-right font-mono tabular-nums text-[11px] text-black/60 dark:text-white/60">
             {specularOpacityText}
           </motion.span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.01}
-            defaultValue={specularOpacity.get()}
-            onInput={(e) =>
-              specularOpacity.set(parseFloat(e.currentTarget.value))
-            }
-            className="flex-1 appearance-none h-[2px] bg-black/20 dark:bg-white/20 rounded outline-none"
-          />
+          <div className="flex-1">
+            <LiquidSlider
+              size={0.5}
+              fillContainer
+              defaultValue={specularOpacity.get() * 100}
+              onChange={(value) => {
+                specularOpacity.set(value / 100);
+              }}
+            />
+          </div>
         </div>
         <div className="flex items-center gap-4">
         <label className="w-56 uppercase tracking-[0.08em] text-[11px] opacity-80 select-none [line-height:1.2]">

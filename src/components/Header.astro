@@ -1,8 +1,10 @@
 ---
 import Hr from "./Hr.astro";
 import IconX from "@/assets/icons/IconX.svg";
+import IconMoon from "@/assets/icons/IconMoon.svg";
 import IconSearch from "@/assets/icons/IconSearch.svg";
 import IconArchive from "@/assets/icons/IconArchive.svg";
+import IconSunHigh from "@/assets/icons/IconSunHigh.svg";
 import IconMenuDeep from "@/assets/icons/IconMenuDeep.svg";
 import LinkButton from "./LinkButton.astro";
 import { ThemeSwitch } from "./LiquidGlass/ThemeSwitch";
@@ -113,13 +115,27 @@ const isActive = (path: string) => {
           </li>
           {
             SITE.lightAndDarkMode && (
-              <li class="col-span-1 flex items-center justify-center">
-                <ThemeSwitch
-                    client:visible
-                    client:only="react"
-                    size={0.4}
-                  />
-              </li>
+              <>
+                <li class="col-span-1 flex items-center justify-center">
+                  <button
+                    id="theme-btn"
+                    class="focus-outline relative size-12 p-4 sm:size-8 hover:[&>svg]:stroke-accent"
+                    title="Toggles light & dark"
+                    aria-label="auto"
+                    aria-live="polite"
+                  >
+                    <IconMoon class="absolute top-[50%] left-[50%] -translate-[50%] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90" />
+                    <IconSunHigh class="absolute top-[50%] left-[50%] -translate-[50%] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0" />
+                  </button>
+                </li>
+                <li class="col-span-1 flex items-center justify-center">
+                  <ThemeSwitch
+                      client:visible
+                      client:only="react"
+                      size={0.4}
+                    />
+                </li>
+              </>
             )
           }
         </ul>
@@ -154,4 +170,16 @@ const isActive = (path: string) => {
 
   // Runs on view transitions navigation
   document.addEventListener("astro:after-swap", toggleNav);
+
+  function toggleThemeBtn() {
+    const themeBtn = document.querySelector("#theme-btn");
+    if (!themeBtn) return;
+
+    themeBtn.addEventListener("click", () => {
+      window.toggleTheme();
+    });
+  }
+
+  toggleThemeBtn();
+  document.addEventListener("astro:after-swap", toggleThemeBtn);
 </script>

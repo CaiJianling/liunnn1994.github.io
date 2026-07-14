@@ -12,6 +12,7 @@ import IconRss from "@/assets/icons/IconRss.svg";
 import IconArrowRight from "@/assets/icons/IconArrowRight.svg";
 import { SITE } from "@/config";
 import { SOCIALS } from "@/constants";
+import { LiquidSlider } from "@/components/LiquidGlass/LiquidSlider";
 
 const posts = await getCollection("blog");
 
@@ -57,6 +58,43 @@ const recentPosts = sortedPosts.filter(({ data }) => !data.featured);
           </div>
         )
       }
+    </section>
+
+    <section id="liquid-slider-test" class="pt-8 pb-8">
+      <h2 class="text-xl font-semibold mb-4">Liquid Slider 测试</h2>
+      <div class="flex flex-col gap-6">
+        <div class="flex flex-col gap-2">
+          <span class="text-sm text-black/60 dark:text-white/60">默认尺寸 (md)</span>
+          <LiquidSlider
+            client:visible
+            client:only="react"
+            size="md"
+            defaultValue={50}
+            onChange={(value, mappedValue) => {
+              console.log(`Value: ${value}%, Mapped: ${mappedValue}%`);
+            }}
+          />
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="text-sm text-black/60 dark:text-white/60">小尺寸 (sm)</span>
+          <LiquidSlider
+            client:visible
+            client:only="react"
+            size="sm"
+            defaultValue={30}
+          />
+        </div>
+        <div class="flex flex-col gap-2">
+          <span class="text-sm text-black/60 dark:text-white/60">自定义宽度 300px</span>
+          <LiquidSlider
+            client:visible
+            client:only="react"
+            size="md"
+            width={300}
+            defaultValue={70}
+          />
+        </div>
+      </div>
     </section>
 
     <Hr />

@@ -159,6 +159,23 @@ export const ThemeSwitch: React.FC<ThemeSwitchProps> = ({
   }, []);
 
   useEffect(() => {
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (mutation.attributeName === "data-theme") {
+          const theme = document.firstElementChild?.getAttribute("data-theme");
+          const newValue = theme === "dark" ? 1 : 0;
+          if (checked.get() !== newValue) {
+            checked.set(newValue);
+          }
+        }
+      }
+    });
+
+    observer.observe(document.documentElement, { attributes: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const handleGlobalUpdate = (e: MouseEvent | TouchEvent) => {
       if (pointerDown.get() < 0.5) return;
 
